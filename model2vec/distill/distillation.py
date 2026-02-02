@@ -3,10 +3,12 @@ from __future__ import annotations
 import logging
 import os
 import re
-from typing import Optional, cast
+from typing import cast
 
 import numpy as np
 from huggingface_hub.hf_api import model_info
+from skeletoken import TokenizerModel
+from skeletoken.pretokenizers import ByteLevelPreTokenizer
 from transformers import AutoModel, AutoTokenizer
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
@@ -15,7 +17,7 @@ from model2vec.distill.inference import PCADimType, PoolingMode, create_embeddin
 from model2vec.distill.utils import select_optimal_device
 from model2vec.model import StaticModel
 from model2vec.quantization import DType, quantize_embeddings
-from model2vec.tokenizer import clean_and_create_vocabulary, replace_vocabulary, turn_tokens_into_ids
+from model2vec.tokenizer import clean_and_create_vocabulary, turn_tokens_into_ids
 from model2vec.vocabulary_quantization import quantize_vocabulary
 
 logger = logging.getLogger(__name__)
@@ -65,7 +67,6 @@ def distill_from_model(
 
     """
     quantize_to = DType(quantize_to)
-    backend_tokenizer = tokenizer.backend_tokenizer
     sif_coefficient, token_remove_regex = _validate_parameters(sif_coefficient, token_remove_pattern)
 
     if vocabulary is None:
@@ -73,48 +74,32 @@ def distill_from_model(
 
     device = select_optimal_device(device)
 
-    n_tokens_before = len(vocabulary)
     # Clean the vocabulary by removing duplicate tokens and tokens that are in the internal vocabulary.
-    all_tokens, backend_tokenizer = clean_and_create_vocabulary(
-        tokenizer, vocabulary, token_remove_regex=token_remove_regex
-    )
-    n_tokens_after = len([token for token in all_tokens if not token.is_internal])
-    if n_tokens_before:
-        logger.info(
-            f"Adding {n_tokens_after} tokens to the vocabulary. Removed {n_tokens_before - n_tokens_after} tokens during preprocessing."
-        )
+    og_tokenizer_model = TokenizerModel.from_transformers_tokenizer(tokenizer)
+    tokenizer_model = og_tokenizer_model._deep_copy()
+    if isinstance(tokenizer_model.pre_tokenizer, ByteLevelPreTokenizer):
+        tokenizer_model.pre_tokenizer.add_prefix_space = True
 
+    # tokenizer_model = tokenizer_model.make_model_greedy()
+    # tokenizer_model = tokenizer_model.decase_vocabulary()
+    # tokenizer_model = tokenizer_model.add_pre_tokenizer(BertPreTokenizer())
+
+    tokenizer_model = clean_and_create_vocabulary(tokenizer_model, vocabulary, token_remove_regex=token_remove_regex)
+    tokenizer_model.post_processor = None
+
+    all_tokens = tokenizer_model.sorted_vocabulary
     if not all_tokens:
         raise ValueError("The vocabulary is empty after preprocessing. Please check your token_remove_pattern.")
 
-    unk_token = cast(Optional[str], tokenizer.special_tokens_map.get("unk_token"))
-    pad_token = cast(Optional[str], tokenizer.special_tokens_map.get("pad_token"))
-
-    # Weird if to satsify mypy
-    if pad_token is None:
-        if unk_token is not None:
-            pad_token = unk_token
-            logger.warning(
-                "The pad token is not set. Setting it to the unk token. This is a workaround for models that don't have a pad token."
-            )
-        else:
-            pad_token = unk_token or all_tokens[0].form
-            logger.warning(
-                "The pad token is not set. Setting it to the first token in the vocabulary. This is a workaround for models that don't have a pad token."
-            )
-
-    # Replace the vocabulary in the tokenizer with the new vocabulary.
-    backend_tokenizer = replace_vocabulary(backend_tokenizer, all_tokens, unk_token=unk_token, pad_token=pad_token)
-    logger.info(f"Creating embeddings for {len(all_tokens)} tokens")
-    # Convert tokens to IDs
-    token_ids = turn_tokens_into_ids(all_tokens, tokenizer, unk_token)
+    # Careful, this needs to be the original tokenizer model
+    token_ids = turn_tokens_into_ids(all_tokens, og_tokenizer_model)
 
     # Create the embeddings
     embeddings = create_embeddings(
         tokenized=token_ids,
         model=model,
         device=device,
-        pad_token_id=tokenizer.get_vocab()[pad_token],
+        pad_token_id=tokenizer_model.pad_token_id or 0,
         pooling=pooling,
     )
 
@@ -159,11 +144,13 @@ def distill_from_model(
             logger.warning(f"Couldn't get the model info from the Hugging Face Hub: {e}. Setting language to None.")
             language = None
 
+    tokenizer_model.to_tokenizer().save("haha.json")
+
     return StaticModel(
         vectors=embeddings,
         weights=weights,
         token_mapping=token_mapping,
-        tokenizer=backend_tokenizer,
+        tokenizer=tokenizer_model.to_tokenizer(),
         config=config,
         base_model_name=model_name,
         language=language,
@@ -174,7 +161,7 @@ def distill_from_model(
 def _validate_parameters(
     sif_coefficient: float | None,
     token_remove_pattern: str | None,
-) -> tuple[float | None, re.Pattern | None]:
+) -> tuple[float | None, re.Pattern[str] | None]:
     """
     Validate the parameters passed to the distillation function.
 
@@ -189,7 +176,7 @@ def _validate_parameters(
         if not 0 < sif_coefficient < 1.0:
             raise ValueError("SIF coefficient must be a value > 0 and < 1.0.")
 
-    token_remove_regex: re.Pattern | None = None
+    token_remove_regex: re.Pattern[str] | None = None
     if token_remove_pattern is not None:
         try:
             token_remove_regex = re.compile(token_remove_pattern)
