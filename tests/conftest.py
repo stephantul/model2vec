@@ -5,6 +5,7 @@ from typing import Any, cast
 import numpy as np
 import pytest
 import torch
+from skeletoken import TokenizerModel
 from tokenizers import Tokenizer
 from tokenizers.models import BPE, Unigram, WordPiece
 from tokenizers.pre_tokenizers import Whitespace
@@ -52,6 +53,12 @@ def mock_tokenizer(request: pytest.FixtureRequest) -> Tokenizer:
 def mock_berttokenizer() -> PreTrainedTokenizerFast:
     """Load the real BertTokenizerFast from the provided tokenizer.json file."""
     return cast(PreTrainedTokenizerFast, AutoTokenizer.from_pretrained("tests/data/test_tokenizer"))
+
+
+@pytest.fixture(scope="function")
+def mock_tokenizermodel() -> TokenizerModel:
+    """Loads the tokenizer as a TokenizerModel."""
+    return TokenizerModel.from_pretrained("tests/data/test_tokenizer")
 
 
 @pytest.fixture

@@ -16,9 +16,16 @@ def clean_and_create_vocabulary(
     """Cleans a vocabulary by removing duplicates and tokens that were already in the vocabulary."""
     seen_tokens = set()
 
+    n_duplicate = 0
+    n_empty = 0
+    n_regex_removed = 0
+
     internal_tokens: list[str] = model.sorted_vocabulary
     if token_remove_regex:
-        internal_tokens = [x for x in internal_tokens if not token_remove_regex.match(x)]
+        len_before = len(internal_tokens)
+        tokens_to_remove = [token for token in internal_tokens if token_remove_regex.match(token)]
+        model = model.remove_tokens_from_vocabulary(tokens_to_remove)
+        n_regex_removed = len_before - len(internal_tokens)
     preprocessor = model.preprocessor
 
     seen_tokens = set(internal_tokens)
@@ -28,17 +35,22 @@ def clean_and_create_vocabulary(
         preprocessed = preprocessor.preprocess(token)
         if len(preprocessed) < 1:
             logger.warning(f"Token '{token}' was empty after preprocessing.")
+            n_empty += 1
             continue
         if len(preprocessed) > 1:
-            logger.warning(f"Token '{token}' was split into multiple tokens after preprocessing.")
+            tokens_as_str = [f"'{subword}'" for subword in token]
+            split_into = ",".join(tokens_as_str)
+            logger.warning(f"Token '{token}' was split into multiple tokens after preprocessing: [{split_into}]")
             added_tokens_to_add.append(token)
             continue
         token = preprocessed[0]
         if token in seen_tokens:
             logger.warning(f"Token '{token}' was already in the vocabulary.")
+            n_duplicate += 1
             continue
         if token_remove_regex and token_remove_regex.match(token):
             logger.warning(f"Token '{token}' was removed due to regex match.")
+            n_regex_removed += 1
             continue
         seen_tokens.add(token)
         tokens_to_add.append(token)
@@ -46,7 +58,22 @@ def clean_and_create_vocabulary(
     model = model.add_tokens_to_vocabulary(tokens_to_add, preprocess_tokens=True)
     model = model.add_addedtokens(added_tokens_to_add, is_special=False, single_word=False, normalized=True)
 
+    n_multiword = len(added_tokens_to_add)
+    _report_statistics(n_multiword, n_duplicate, n_regex_removed, n_empty)
+
     return model
+
+
+def _report_statistics(n_multiword: int, n_duplicate: int, n_regex_removed: int, n_empty: int) -> None:
+    """Helper function to avoid increasing complexity in main function."""
+    if n_multiword:
+        logger.info(f"Added {n_multiword} multi-word tokens to the vocabulary.")
+    if n_duplicate:
+        logger.info(f"Removed {n_duplicate} duplicate tokens.")
+    if n_regex_removed:
+        logger.info(f"Removed {n_regex_removed} tokens due to regex match.")
+    if n_empty:
+        logger.info(f"Removed {n_empty} empty tokens.")
 
 
 def turn_tokens_into_ids(tokens: list[str], model: TokenizerModel) -> list[list[int]]:

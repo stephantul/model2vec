@@ -8,7 +8,6 @@ from typing import cast
 import numpy as np
 from huggingface_hub.hf_api import model_info
 from skeletoken import TokenizerModel
-from skeletoken.pretokenizers import ByteLevelPreTokenizer
 from transformers import AutoModel, AutoTokenizer
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
@@ -39,7 +38,8 @@ def distill_from_model(
     Distill a staticmodel from a sentence transformer.
 
     This function creates a set of embeddings from a sentence transformer. It does this by doing either
-    a forward pass for all subword tokens in the tokenizer, or by doing a forward pass for all tokens in a passed vocabulary.
+    a forward pass for all subword tokens in the tokenizer, or by doing a forward pass for all tokens in a passed
+    vocabulary.
 
     If you pass through a vocabulary, we create a custom word tokenizer for that vocabulary.
     If you don't pass a vocabulary, we use the model's tokenizer directly.
@@ -53,10 +53,13 @@ def distill_from_model(
         If this is 'auto', we don't reduce dimensionality, but still apply PCA.
     :param sif_coefficient: The SIF coefficient to use. If this is None, no weighting is applied.
         Should be a value > 0 and < 1.0. A value of 1e-4 is a good default.
-    :param token_remove_pattern: If this is set to a string, we compile this into a regex. Any tokens that conform to this regex pattern will be removed from the vocabulary.
-        If the pattern is so general that it removes all tokens, we throw an error. If the pattern can't be compiled into a valid regex, we also throw an error.
+    :param token_remove_pattern: If this is set to a string, we compile this into a regex. Any tokens that conform to
+        this regex pattern will be removed from the vocabulary.
+        If the pattern is so general that it removes all tokens, we throw an error. If the pattern can't be compiled
+        into a valid regex, we also throw an error.
     :param quantize_to: The data type to quantize to. Can be any of the DType enum members or their string equivalents.
-    :param vocabulary_quantization: The number of clusters to use for vocabulary quantization. If this is None, no quantization is performed.
+    :param vocabulary_quantization: The number of clusters to use for vocabulary quantization. If this is None, no
+         quantization is performed.
     :param pooling: The pooling mode to use for creating embeddings. Can be one of:
         'mean' (default): mean over all tokens. Robust and works well in most cases.
         'last': use the last token's hidden state (often the [EOS] token). Common for decoder-style models.
@@ -73,28 +76,28 @@ def distill_from_model(
         vocabulary = []
 
     device = select_optimal_device(device)
+    original_tokenizer_model = TokenizerModel.from_transformers_tokenizer(tokenizer)
 
     # Clean the vocabulary by removing duplicate tokens and tokens that are in the internal vocabulary.
-    og_tokenizer_model = TokenizerModel.from_transformers_tokenizer(tokenizer)
-    tokenizer_model = og_tokenizer_model._deep_copy()
-    if isinstance(tokenizer_model.pre_tokenizer, ByteLevelPreTokenizer):
-        tokenizer_model.pre_tokenizer.add_prefix_space = True
+    # Copy the original tokenizer model.
+    tokenizer_model = original_tokenizer_model._deep_copy()
+    if tokenizer_model.adds_prefix_space is not None:
+        tokenizer_model.adds_prefix_space = True
 
-    # tokenizer_model = tokenizer_model.make_model_greedy()
-    # tokenizer_model = tokenizer_model.decase_vocabulary()
-    # tokenizer_model = tokenizer_model.add_pre_tokenizer(BertPreTokenizer())
-
+    # Create the vocabulary in the new tokenizer.
     tokenizer_model = clean_and_create_vocabulary(tokenizer_model, vocabulary, token_remove_regex=token_remove_regex)
+    # Remove the post processor, this is not necessary.
     tokenizer_model.post_processor = None
 
+    # All tokens in a single list.
     all_tokens = tokenizer_model.sorted_vocabulary
     if not all_tokens:
         raise ValueError("The vocabulary is empty after preprocessing. Please check your token_remove_pattern.")
 
-    # Careful, this needs to be the original tokenizer model
-    token_ids = turn_tokens_into_ids(all_tokens, og_tokenizer_model)
+    # Turn all _new_ tokens into ids using the original tokenizer
+    token_ids = turn_tokens_into_ids(all_tokens, original_tokenizer_model)
 
-    # Create the embeddings
+    # Create the embeddings using the ids from the original tokenizer.
     embeddings = create_embeddings(
         tokenized=token_ids,
         model=model,
@@ -103,6 +106,7 @@ def distill_from_model(
         pooling=pooling,
     )
 
+    # Maybe apply quantization
     if vocabulary_quantization is not None:
         _, weights = post_process_embeddings(np.asarray(embeddings), None, sif_coefficient=sif_coefficient)
         embeddings, token_mapping, weights = quantize_vocabulary(
@@ -144,8 +148,6 @@ def distill_from_model(
             logger.warning(f"Couldn't get the model info from the Hugging Face Hub: {e}. Setting language to None.")
             language = None
 
-    tokenizer_model.to_tokenizer().save("haha.json")
-
     return StaticModel(
         vectors=embeddings,
         weights=weights,
@@ -167,7 +169,8 @@ def _validate_parameters(
 
     :param sif_coefficient: The SIF coefficient to use. If this is None, no weighting is applied.
         Should be a value >= 0 and < 1.0. A value of 1e-4 is a good default.
-    :param token_remove_pattern: If this is set to a string, we compile this into a regex. Any tokens that conform to this regex pattern will be removed from the vocabulary.
+    :param token_remove_pattern: If this is set to a string, we compile this into a regex. Any tokens that conform to
+        this regex pattern will be removed from the vocabulary.
     :return: The SIF coefficient to use.
     :raises: ValueError if the regex can't be compiled.
 
@@ -202,7 +205,8 @@ def distill(
     Distill a staticmodel from a sentence transformer.
 
     This function creates a set of embeddings from a sentence transformer. It does this by doing either
-    a forward pass for all subword tokens in the tokenizer, or by doing a forward pass for all tokens in a passed vocabulary.
+    a forward pass for all subword tokens in the tokenizer, or by doing a forward pass for all tokens in a passed
+    vocabulary.
 
     If you pass through a vocabulary, we create a custom word tokenizer for that vocabulary.
     If you don't pass a vocabulary, we use the model's tokenizer directly.
@@ -215,10 +219,13 @@ def distill(
         If this is 'auto', we don't reduce dimenionality, but still apply PCA.
     :param sif_coefficient: The SIF coefficient to use. If this is None, no weighting is applied.
         Should be a value >= 0 and < 1.0. A value of 1e-4 is a good default.
-    :param token_remove_pattern: If this is set to a string, we compile this into a regex. Any tokens that conform to this regex pattern will be removed from the vocabulary.
-    :param trust_remote_code: Whether to trust the remote code. If this is False, we will only load components coming from `transformers`. If this is True, we will load all components.
+    :param token_remove_pattern: If this is set to a string, we compile this into a regex. Any tokens that conform to
+        this regex pattern will be removed from the vocabulary.
+    :param trust_remote_code: Whether to trust the remote code. If this is False, we will only load components coming
+        from `transformers`. If this is True, we will load all components.
     :param quantize_to: The data type to quantize to. Can be any of the DType enum members or their string equivalents.
-    :param vocabulary_quantization: The number of clusters to use for vocabulary quantization. If this is None, no quantization is performed.
+    :param vocabulary_quantization: The number of clusters to use for vocabulary quantization. If this is None, no
+        quantization is performed.
     :param pooling: The pooling mode to use for creating embeddings. Can be one of:
         'mean' (default): mean over all tokens. Robust and works well in most cases.
         'last': use the last token's hidden state (often the [EOS] token). Common for decoder-style models.
