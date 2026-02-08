@@ -76,7 +76,7 @@ def test_importable() -> None:
 def test_get_package_extras() -> None:
     """Test package extras."""
     extras = set(get_package_extras("model2vec", "distill"))
-    assert extras == {"torch", "transformers", "scikit-learn"}
+    assert extras == {"skeletoken", "torch", "transformers", "scikit-learn"}
 
 
 def test_get_package_extras_empty() -> None:
