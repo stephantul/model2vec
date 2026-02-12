@@ -13,7 +13,7 @@ def clean_and_create_vocabulary(
     vocabulary_to_add: list[str],
     token_remove_regex: re.Pattern[str] | None,
 ) -> TokenizerModel:
-    """Cleans a vocabulary by removing duplicates and tokens that were already in the vocabulary."""
+    """Clean a vocabulary by removing duplicates and tokens that were already in the vocabulary."""
     seen_tokens = set()
 
     n_duplicate = 0
@@ -22,10 +22,9 @@ def clean_and_create_vocabulary(
 
     internal_tokens: list[str] = model.sorted_vocabulary
     if token_remove_regex:
-        len_before = len(internal_tokens)
         tokens_to_remove = [token for token in internal_tokens if token_remove_regex.match(token)]
         model = model.remove_tokens_from_vocabulary(tokens_to_remove)
-        n_regex_removed = len_before - len(internal_tokens)
+        n_regex_removed = len(tokens_to_remove)
     preprocessor = model.preprocessor
 
     seen_tokens = set(internal_tokens)
@@ -38,7 +37,7 @@ def clean_and_create_vocabulary(
             n_empty += 1
             continue
         if len(preprocessed) > 1:
-            tokens_as_str = [f"'{subword}'" for subword in token]
+            tokens_as_str = [f"'{subword}'" for subword in preprocessed]
             split_into = ",".join(tokens_as_str)
             logger.warning(f"Token '{token}' was split into multiple tokens after preprocessing: [{split_into}]")
             added_tokens_to_add.append(token)
@@ -65,7 +64,7 @@ def clean_and_create_vocabulary(
 
 
 def _report_statistics(n_multiword: int, n_duplicate: int, n_regex_removed: int, n_empty: int) -> None:
-    """Helper function to avoid increasing complexity in main function."""
+    """Report statistics on the various types of issues we found."""
     if n_multiword:
         logger.info(f"Added {n_multiword} multi-word tokens to the vocabulary.")
     if n_duplicate:

@@ -80,7 +80,7 @@ def distill_from_model(
 
     # Clean the vocabulary by removing duplicate tokens and tokens that are in the internal vocabulary.
     # Copy the original tokenizer model.
-    tokenizer_model = original_tokenizer_model._deep_copy()
+    tokenizer_model = original_tokenizer_model.model_copy(deep=True)
     if tokenizer_model.adds_prefix_space is not None:
         tokenizer_model.adds_prefix_space = True
 
@@ -184,7 +184,7 @@ def _validate_parameters(
         try:
             token_remove_regex = re.compile(token_remove_pattern)
         except re.error as e:
-            raise ValueError(f"Couldn't compile the regex pattern: {e}")
+            raise ValueError(f"Couldn't compile the regex pattern: {e}") from e
 
     return sif_coefficient, token_remove_regex
 
